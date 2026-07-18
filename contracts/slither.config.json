@@ -1,0 +1,15 @@
+{
+  "filter_paths": "lib/",
+  "solc_remaps": [
+    "@openzeppelin/=lib/openzeppelin-contracts/",
+    "forge-std/=lib/forge-std/src/"
+  ],
+  "detectors_to_exclude": [
+    "assembly",
+    "low-level-calls"
+  ],
+  "exclude_informational": false,
+  "exclude_optimization": false,
+  "exclude_low": false,
+  "fail_on": "high"
+}
