@@ -1,0 +1,24 @@
+# Foundry
+out/
+cache/
+broadcast/
+
+# Dependencies (устанавливаются через forge install)
+lib/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+
+# Coverage
+coverage/
+lcov.info
+.gas-snapshot
