@@ -1,0 +1,339 @@
+name: Security Audit CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Nightly security scan at 2:00 UTC
+    - cron: '0 2 * * *'
+
+env:
+  FOUNDRY_PROFILE: ci
+
+jobs:
+  # ============================================================
+  # 1. LINT & FORMAT
+  # ============================================================
+  lint:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+
+      - name: Check formatting
+        run: forge fmt --check
+        working-directory: contracts
+
+      - name: Run solhint
+        uses: contractshark/inject-solhint@v1
+        with:
+          working-directory: contracts
+
+  # ============================================================
+  # 2. UNIT TESTS
+  # ============================================================
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+
+      - name: Run tests
+        run: forge test -vvv
+        working-directory: contracts
+        env:
+          FOUNDRY_PROFILE: ci
+
+      - name: Generate coverage
+        run: forge coverage --report lcov
+        working-directory: contracts
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: contracts/lcov.info
+          fail_ci_if_error: false
+
+  # ============================================================
+  # 3. SLITHER STATIC ANALYSIS
+  # ============================================================
+  slither:
+    name: Slither Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+
+      - name: Run Slither
+        uses: crytic/slither-action@v0.4.0
+        with:
+          target: contracts/
+          slither-config: contracts/slither.config.json
+          fail-on: high
+          sarif: slither.sarif
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: slither.sarif
+
+  # ============================================================
+  # 4. MYTHRIL SYMBOLIC EXECUTION
+  # ============================================================
+  mythril:
+    name: Mythril Symbolic Execution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+
+      - name: Build contracts
+        run: forge build
+        working-directory: contracts
+
+      - name: Install Mythril
+        run: pip3 install mythril
+
+      - name: Run Mythril on FeeSplitter
+        run: |
+          myth analyze contracts/src/FeeSplitter.sol \
+            --solc-json contracts/mythril.config.json \
+            --execution-timeout 600 \
+            --max-depth 64 \
+            --solver-timeout 300 \
+            --solv 0.8.26 \
+            -o markdown \
+            > mythril-report.md
+        timeout-minutes: 15
+
+      - name: Upload Mythril report
+        uses: actions/upload-artifact@v4
+        with:
+          name: mythril-report
+          path: mythril-report.md
+
+      - name: Check for critical issues
+        run: |
+          if grep -q "Severity: High" mythril-report.md || grep -q "Severity: Critical" mythril-report.md; then
+            echo "Critical issues found by Mythril"
+            cat mythril-report.md
+            exit 1
+          fi
+        continue-on-error: true
+
+  # ============================================================
+  # 5. ECHIDNA PROPERTY FUZZING
+  # ============================================================
+  echidna:
+    name: Echidna Property Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+
+      - name: Install Echidna
+        run: |
+          wget https://github.com/crytic/echidna/releases/download/v2.2.3/echidna-2.2.3-x86_64-linux.tar.gz
+          tar -xzf echidna-2.2.3-x86_64-linux.tar.gz
+          sudo mv echidna /usr/local/bin/
+
+      - name: Build contracts
+        run: forge build
+        working-directory: contracts
+
+      - name: Run Echidna
+        run: |
+          echidna contracts/test/FeeSplitterEchidna.sol \
+            --contract FeeSplitterEchidna \
+            --config contracts/echidna.config.yml \
+            --test-mode property
+        timeout-minutes: 30
+
+  # ============================================================
+  # 6. INVARIANT TESTS (Foundry deep)
+  # ============================================================
+  invariant-tests:
+    name: Deep Invariant Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+
+      - name: Run invariant tests
+        run: forge test --match-contract Invariant -vvv
+        working-directory: contracts
+        env:
+          FOUNDRY_PROFILE: security
+        timeout-minutes: 45
+
+  # ============================================================
+  # 7. GAS REPORT
+  # ============================================================
+  gas-report:
+    name: Gas Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+
+      - name: Generate gas snapshot
+        run: forge snapshot --check
+        working-directory: contracts
+        continue-on-error: true
+
+      - name: Generate gas report
+        run: forge test --gas-report > gas-report.txt
+        working-directory: contracts
+        env:
+          FOUNDRY_PROFILE: gas
+
+      - name: Upload gas report
+        uses: actions/upload-artifact@v4
+        with:
+          name: gas-report
+          path: contracts/gas-report.txt
+
+  # ============================================================
+  # 8. DEPLOYMENT SIMULATION
+  # ============================================================
+  deploy-sim:
+    name: Deployment Simulation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+
+      - name: Start Anvil
+        run: anvil --fork-url ${{ secrets.RPC_URL }} --silent &
+
+      - name: Simulate deployment
+        run: |
+          forge script script/DeployFeeSplitter.s.sol \
+            --rpc-url http://localhost:8545 \
+            --broadcast \
+            --verify
+        working-directory: contracts
+        env:
+          PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+
+  # ============================================================
+  # 9. EXECUTION LAYER TESTS (Go)
+  # ============================================================
+  execution-tests:
+    name: Execution Layer Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Run Go tests
+        run: go test ./execution/... -v -race
+        working-directory: .
+
+      - name: Run linter
+        uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: execution
+          args: --timeout=5m
+
+  # ============================================================
+  # 10. GENESIS VALIDATION
+  # ============================================================
+  genesis-check:
+    name: Genesis Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Validate genesis
+        run: python scripts/validate_genesis.py
+        working-directory: .
+
+  # ============================================================
+  # 11. INTEGRATION TESTS (sequential, needs all above)
+  # ============================================================
+  integration-tests:
+    name: Integration Tests
+    needs: [unit-tests, execution-tests, deploy-sim]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Run integration tests
+        run: make test-integration
+        working-directory: .
+        timeout-minutes: 20
