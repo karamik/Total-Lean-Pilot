@@ -1,0 +1,75 @@
+version: 2
+
+updates:
+  # --- Go modules (execution layer) ---
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "karamik"
+    labels:
+      - "dependencies"
+      - "go"
+    commit-message:
+      prefix: "deps(go)"
+      include: "scope"
+    # Игнорируем major updates go-ethereum (может ломать consensus)
+    ignore:
+      - dependency-name: "github.com/ethereum/go-ethereum"
+        update-types: ["version-update:semver-major"]
+
+  # --- Solidity dependencies (Foundry) ---
+  - package-ecosystem: "pip"
+    directory: "/contracts"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "karamik"
+    labels:
+      - "dependencies"
+      - "solidity"
+    commit-message:
+      prefix: "deps(sol)"
+
+  # --- GitHub Actions ---
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "karamik"
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "deps(ci)"
+
+  # --- Docker images ---
+  - package-ecosystem: "docker"
+    directory: "/validator/docker"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 3
+    reviewers:
+      - "karamik"
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "deps(docker)"
