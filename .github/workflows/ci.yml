@@ -1,0 +1,360 @@
+
+# GitHub Actions CI/CD для Total-Lean-Pilot
+
+ci_content = """name: TOTAL Lean Pilot CI
+
+on:
+  push:
+    branches: [ main, develop, 'feature/**' ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Nightly build at 2 AM UTC
+    - cron: '0 2 * * *'
+
+env:
+  FOUNDRY_PROFILE: ci
+  GO_VERSION: '1.22'
+  FOUNDRY_VERSION: nightly
+
+jobs:
+  # =================================================================
+  # JOB 1: Lint & Format
+  # =================================================================
+  lint:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Setup Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+
+      - name: Go fmt
+        run: |
+          cd execution
+          gofmt -d .
+          test -z $(gofmt -l .)
+
+      - name: Go vet
+        run: |
+          cd execution
+          go vet ./...
+
+      - name: Forge fmt check
+        run: |
+          cd contracts
+          forge fmt --check
+
+      - name: Python lint
+        uses: chartboost/ruff-action@v1
+        with:
+          src: "./scripts"
+
+  # =================================================================
+  # JOB 2: Smart Contract Tests
+  # =================================================================
+  contract-tests:
+    name: Smart Contract Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          cd contracts
+          forge install
+
+      - name: Run tests
+        run: |
+          cd contracts
+          forge test -vvv --gas-report
+
+      - name: Run coverage
+        run: |
+          cd contracts
+          forge coverage --report lcov
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./contracts/lcov.info
+          flags: contracts
+          name: contract-coverage
+
+  # =================================================================
+  # JOB 3: Execution Node Tests
+  # =================================================================
+  execution-tests:
+    name: Execution Node Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Download dependencies
+        run: |
+          cd execution
+          go mod download
+
+      - name: Run unit tests
+        run: |
+          cd execution
+          go test ./core/... -v -race -coverprofile=coverage.out
+
+      - name: Generate coverage report
+        run: |
+          cd execution
+          go tool cover -html=coverage.out -o coverage.html
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./execution/coverage.out
+          flags: execution
+          name: execution-coverage
+
+  # =================================================================
+  # JOB 4: Genesis Generator Tests
+  # =================================================================
+  genesis-tests:
+    name: Genesis Generator Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install pytest
+
+      - name: Run genesis generator
+        run: |
+          python3 scripts/generate_genesis.py --output genesis-ci.json --validate
+
+      - name: Validate genesis structure
+        run: |
+          python3 -c "
+          import json
+          with open('genesis-ci.json') as f:
+              g = json.load(f)
+          assert g['config']['chainId'] == 888888
+          assert g['config']['clique']['period'] == 6
+          assert g['config']['clique']['epoch'] == 100
+          assert len(g['alloc']) >= 3
+          print('Genesis validation passed!')
+          "
+
+      - name: Test with different validator counts
+        run: |
+          python3 scripts/generate_genesis.py --validators 3 --output genesis-3.json --quiet
+          python3 scripts/generate_genesis.py --validators 5 --output genesis-5.json --quiet
+          python3 scripts/generate_genesis.py --validators 7 --output genesis-7.json --quiet
+
+      - name: Upload genesis artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: genesis-files
+          path: genesis-*.json
+
+  # =================================================================
+  # JOB 5: Integration Tests (Docker)
+  # =================================================================
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [contract-tests, execution-tests]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Setup Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+
+      - name: Setup Docker
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build execution node
+        run: |
+          cd execution
+          go build -o bin/total-geth ./cmd/total-geth
+
+      - name: Build contracts
+        run: |
+          cd contracts
+          forge build
+
+      - name: Start devnet
+        run: |
+          docker-compose -f validator/docker/docker-compose.yml up -d
+          sleep 30  # Wait for nodes to start
+
+      - name: Test RPC connectivity
+        run: |
+          curl -s -X POST http://localhost:8545 \
+            -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' | \
+            grep -q "0xd5f38"  # 888888 in hex
+
+      - name: Test genesis block
+        run: |
+          curl -s -X POST http://localhost:8545 \
+            -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x0",false],"id":1}' | \
+            python3 -m json.tool | grep -q "gasLimit"
+
+      - name: Deploy FeeSplitter
+        run: |
+          cd contracts
+          forge script script/DeployFeeSplitter.s.sol \
+            --rpc-url http://localhost:8545 \
+            --broadcast \
+            --private-key 0x1111111111111111111111111111111111111111111111111111111111111111
+
+      - name: Test fee split
+        run: |
+          # Send 0.01 ETH to FeeSplitter
+          cast send 0x00000000000000000000000000000000FEE55917 \
+            --value 0.01ether \
+            --rpc-url http://localhost:8545 \
+            --private-key 0x1111111111111111111111111111111111111111111111111111111111111111
+
+      - name: Cleanup devnet
+        if: always()
+        run: |
+          docker-compose -f validator/docker/docker-compose.yml down -v
+
+  # =================================================================
+  # JOB 6: Security Audit (Slither)
+  # =================================================================
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Slither
+        run: |
+          pip install slither-analyzer
+
+      - name: Run Slither
+        run: |
+          cd contracts
+          slither src/ --json slither-report.json || true
+
+      - name: Upload Slither report
+        uses: actions/upload-artifact@v4
+        with:
+          name: slither-report
+          path: contracts/slither-report.json
+
+  # =================================================================
+  # JOB 7: Build & Release
+  # =================================================================
+  build-release:
+    name: Build Release
+    runs-on: ubuntu-latest
+    needs: [lint, contract-tests, execution-tests, genesis-tests]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build binaries
+        run: |
+          cd execution
+          GOOS=linux GOARCH=amd64 go build -o ../bin/total-geth-linux-amd64 ./cmd/total-geth
+          GOOS=darwin GOARCH=amd64 go build -o ../bin/total-geth-darwin-amd64 ./cmd/total-geth
+          GOOS=darwin GOARCH=arm64 go build -o ../bin/total-geth-darwin-arm64 ./cmd/total-geth
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-geth-binaries
+          path: bin/total-geth-*
+
+  # =================================================================
+  # JOB 8: Documentation Check
+  # =================================================================
+  docs-check:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check README links
+        uses: lycheeverse/lychee-action@v1
+        with:
+          args: --timeout 30 README.md docs/*.md
+
+      - name: Check markdown formatting
+        uses: DavidAnson/markdownlint-cli2-action@v16
+        with:
+          globs: '**/*.md'
+"""
+
+# Сохраняем
+base_path = '/mnt/agents/output/Total-Lean-Pilot'
+ci_path = f'{base_path}/.github/workflows/ci.yml'
+
+import os
+os.makedirs(os.path.dirname(ci_path), exist_ok=True)
+
+with open(ci_path, 'w', encoding='utf-8') as f:
+    f.write(ci_content)
+
+print(f"CI workflow saved: {ci_path}")
+print(f"Size: {len(ci_content)} chars")
