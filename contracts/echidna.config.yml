@@ -1,0 +1,10 @@
+coverage: true
+testLimit: 50000
+seqLen: 100
+shrinkLimit: 5000
+timeout: 600
+workers: 4
+sender: ["0x10000", "0x20000", "0x30000"]
+deployer: "0x30000"
+testMode: property
+corpusDir: echidna-corpus
