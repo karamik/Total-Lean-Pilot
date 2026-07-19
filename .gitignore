@@ -1,0 +1,176 @@
+
+# ============================================================
+# TOTAL Lean Pilot — .gitignore
+# ============================================================
+
+# ============ SECRETS & ENV ============
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+secrets/
+config/local*
+
+# ============ FOUNDRY / SOLIDITY ============
+# Build artifacts
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+
+# Dependencies (install via forge install)
+contracts/lib/
+
+# Gas snapshots (generated)
+contracts/.gas-snapshot
+contracts/gas-report.txt
+
+# Coverage
+contracts/coverage/
+contracts/lcov.info
+
+# Echidna corpus
+echidna-corpus/
+
+# ============ GO ============
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+build/
+bin/
+dist/
+
+# Test binary
+*.test
+
+# Coverage
+coverage.out
+coverage.html
+
+# Go workspace
+go.work
+go.work.sum
+
+# ============ RUST (Prover) ============
+# Build
+target/
+Cargo.lock
+
+# ============ PYTHON ============
+# Virtual env
+venv/
+env/
+ENV/
+.venv
+
+# Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution
+*.egg-info/
+dist/
+build/
+
+# ============ NODE.JS (Bots) ============
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# ============ DOCKER ============
+# Volumes ( persisted data )
+monitoring/prometheus-data/
+monitoring/grafana-data/
+monitoring/alertmanager-data/
+
+# ============ IDE ============
+# VS Code
+.vscode/
+*.code-workspace
+
+# JetBrains
+.idea/
+*.iml
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+#*#
+.#*
+
+# Sublime
+*.sublime-project
+*.sublime-workspace
+
+# ============ OS ============
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+
+# Linux
+*~
+.nfs*
+
+# ============ LOGS ============
+*.log
+logs/
+log/
+
+# ============ TEMP ============
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# ============ CERTIFICATES ============
+*.crt
+*.csr
+*.der
+
+# ============ DEPLOYMENT ============
+# Local deployment artifacts
+scripts/deploy-local.sh
+scripts/*.local
+
+# Anvil temp
+anvil-state/
+
+# ============ DOCUMENTATION GENERATED ============
+docs/generated/
+
+# ============ MISC ============
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# Kubernetes
+*.kubeconfig
+
+# Local test data
+test-data/
+fixtures/
